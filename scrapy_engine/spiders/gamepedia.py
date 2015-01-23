@@ -26,7 +26,7 @@ import re
 from urlparse import urlparse
 
 import scrapy
-from scrapy import Selector, Request, log
+from scrapy import Selector, log
 from scrapy_engine.items import UniqueItem
 
 
