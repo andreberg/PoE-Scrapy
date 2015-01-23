@@ -36,13 +36,13 @@ from scrapy.utils.project import get_project_settings
 from scrapy_engine.spiders.gamepedia import GamepediaSpider
 
 __all__ = []
-__version__ = 0.1
+__version__ = '0.1'
 __date__ = '2015-01-19'
 __updated__ = '2015-01-23'
 
-DEBUG = 0 or ('DebugLevel' in os.environ and os.environ['DebugLevel'] > 0)
-TESTRUN = 0 or ('TestRunLevel' in os.environ and os.environ['TestRunLevel'] > 0)
-PROFILE = 0 or ('ProfileLevel' in os.environ and os.environ['ProfileLevel'] > 0)
+DEBUG = 0 or os.environ.get('DebugLevel', 0)
+TESTRUN = 0 or os.environ.get('TestRunLevel', 0)
+PROFILE = 0 or os.environ.get('ProfileLevel', 0)
 
 __g_scrapy = None
 __g_spiders = [{
