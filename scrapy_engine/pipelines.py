@@ -5,13 +5,13 @@
 # Don't forget to add your pipeline to the ITEM_PIPELINES setting
 # See: http://doc.scrapy.org/en/latest/topics/item-pipeline.html
 
-import os, re
+import os, re, sys
 from scrapy import signals, log
 from scrapy.contrib.exporter import XmlItemExporter, PprintItemExporter
 import poe_scrape
 import time
 from lxml import html
-import sys
+from lxml.cssselect import CSSSelector
 
 
 def _get_category(spider):
@@ -25,6 +25,10 @@ def _get_category(spider):
 
 def _get_words(text):
     return re.findall(r'([a-zA-Z]+)', text)
+
+
+def _get_memory_address(obj):
+    return format(id(obj), '#010x' if sys.maxsize.bit_length() <= 32 else '#018x')
 
 
 class DataTransform(object):
@@ -174,7 +178,8 @@ last one in line.{1}\
     
     def __init__(self):
         super(UniqueItemsProcessor, self).__init__()
-        self.text_store = (UniqueItemsProcessor.file_header.format(time.strftime("%Y-%m-%dT%H:%M:%S"), os.linesep))
+        timestamp = time.strftime("%Y-%m-%dT%H:%M:%S")
+        self.text_store = (UniqueItemsProcessor.file_header.format(timestamp, os.linesep))
         self.item_store = {}
         self.categories = []
         self.unique_items = []
@@ -184,11 +189,12 @@ last one in line.{1}\
             ValueTransform(self), 
             TextTransform(self)
         ]
+        self.append_item_url = False
     
     def __str__(self):
         return ("<{} at {}> - {} items: {}/{}/{} (U/S/C)"
                 .format("UniqueItemsProcessor", 
-                        format(id(self), '#010x' if sys.maxsize.bit_length() <= 32 else '#018x'), 
+                        _get_memory_address(self), 
                         self._item_count(), 
                         len(self.unique_items), 
                         len(self.special_items), 
@@ -326,14 +332,34 @@ last one in line.{1}\
             category = special_item['category']
             name = special_item['name']
             doc = html.parse(url)
-            text_mods = doc.xpath('.//dl//dd/span')
-            processed_mods = []
-            for _mod in text_mods:
-                mod = _mod.text
-                if len(mod.strip()) == 0:
-                    continue
-                processed_mods.append(self._apply_transform(mod, category))
-            mod_string = sep.join(processed_mods)
+            base_sel = "div#mw-content-text.mw-content-ltr > ul"
+            variant_names = doc.xpath(CSSSelector('{} li'.format(base_sel)).path)
+            variant_mods_dl = doc.xpath(CSSSelector('{}+dl'.format(base_sel)).path)
+            if len(variant_names) == len(variant_mods_dl):
+                mod_string = ""
+                initial_sep = ""
+                for variant_name, dl in zip(variant_names, variant_mods_dl):
+                    processed_mods = []
+                    mods = dl.xpath('.//span')
+                    for _mod in mods:
+                        mod = _mod.text
+                        if len(mod.strip()) == 0:
+                            continue
+                        processed_mods.append(self._apply_transform(mod, category))
+                    var_name = re.sub(r"([A-Za-z]+) variant.*", r"\1", variant_name.text)
+                    mod_string = mod_string + "{} -{}- {}{}".format(initial_sep, 
+                                                                    var_name.strip(), 
+                                                                    sep, sep.join(processed_mods))
+                    initial_sep = sep
+            else:
+                processed_mods = []
+                text_mods = doc.xpath('.//dl//dd/span')
+                for _mod in text_mods:
+                    mod = _mod.text
+                    if len(mod.strip()) == 0:
+                        continue
+                    processed_mods.append(self._apply_transform(mod, category))
+                    mod_string = " {} ".format(name) + sep.join(processed_mods)
             pattern = "<Style Variant>"
             lines = []
             for line in self.text_store.split(os.linesep):
@@ -348,7 +374,7 @@ last one in line.{1}\
             unique_item_set = self._get_unique_item_set(category)
             text = self.text_store
             text = text + (self.category_header.format(category, self._item_count(category)))
-            if poe_scrape.DEBUG > 0:
+            if self.append_item_url:
                 line_format = "{{}}{{}}{{}} ; {{}} {0}".format(os.linesep)
                 for item in unique_item_set:
                     line = line_format.format(self._process_name(item),
@@ -386,10 +412,10 @@ class PoeScrapyPipeline(object):
     def from_crawler(cls, crawler):
         pipeline = cls()
         crawler.signals.connect(pipeline.spider_closed, signals.spider_closed)
-        pipeline.outdir = crawler.settings['OUTPATH']
-        pipeline.verbose = crawler.settings['VERBOSE']
+        pipeline.outdir = crawler.settings.get('OUTPATH', os.curdir)
+        pipeline.verbose = crawler.settings.get('VERBOSE', 0)
         pipeline.processor = UniqueItemsProcessor()
-
+        pipeline.processor.append_item_url = crawler.settings.get('APPEND_ITEM_URL', False)
         return pipeline
           
     def spider_closed(self, spider):
@@ -456,32 +482,3 @@ class PoeScrapyPipeline(object):
         #log.msg("self.processor = %s" % str(self.processor), log.INFO)
         self.processor.add_unique_item(item)
         return item
-
-
-# class XmlExportPipeline(object):
-#  
-#     def __init__(self):
-#         self.files = {}
-#      
-#     @classmethod
-#     def from_crawler(cls, crawler):
-#         pipeline = cls()
-#         crawler.signals.connect(pipeline.spider_opened, signals.spider_opened)
-#         crawler.signals.connect(pipeline.spider_closed, signals.spider_closed)
-#         return pipeline
-#  
-#     def spider_opened(self, spider):
-#         afile = open('{0}_products.xml'.format(spider.name), 'w+b')
-#         self.files[spider] = afile
-#         self.exporter = XmlItemExporter(afile)
-#         self.exporter.start_exporting()
-#  
-#     def spider_closed(self, spider):
-#         self.exporter.finish_exporting()
-#         afile = self.files.pop(spider)
-#         afile.close()
-#  
-#     def process_item(self, item, spider):
-#         self.exporter.export_item(item)
-#         return item
-    

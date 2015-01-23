@@ -22,5 +22,8 @@ CONCURRENT_REQUESTS = 4
 CONCURRENT_ITEMS = 10
 ROBOTSTXT_OBEY = True
 
+# Append "; <item url>" as line terminating comment to Uniques.txt
+APPEND_ITEM_URL = True
+
 # Crawl responsibly by identifying yourself (and your website) on the user-agent
 #USER_AGENT = 'scrapy_engine (+http://www.yourdomain.com)'
