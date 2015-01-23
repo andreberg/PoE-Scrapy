@@ -60,11 +60,6 @@ class GamepediaSpider(scrapy.Spider):
         'http://pathofexile.gamepedia.com/List_of_unique_maps'
     ]
 
-    def make_requests_from_url(self, url):
-        request = Request(url, dont_filter=True)
-        request.meta['start_url'] = url
-        return request
-
     def set_path(self, url_parts):
         doc_path = url_parts.path
         if doc_path.startswith("/"):
@@ -116,7 +111,8 @@ class GamepediaSpider(scrapy.Spider):
                 unique_item['implicit_mods'] = an_item.xpath("./td[last()]//div[@class='itemboxstatsgroup'][1]//span/text()").extract()
             affix_mods = an_item.xpath("./td[last()]//div[@class='itemboxstatsgroup'][last()]//span/text()").extract()                
             unique_item['affix_mods'] = affix_mods
-            unique_item['url'] = url_parts.scheme + "://" + url_parts.netloc + an_item.xpath("./td[1]/a[1]/@href").extract()[0]
+            unique_item['url'] = "{}://{}{}".format(url_parts.scheme, 
+                                                    url_parts.netloc, an_item.xpath("./td[1]/a[1]/@href").extract()[0])
             unique_item['category'] = self.get_category()
             unique_items.append(unique_item)
         return unique_items
