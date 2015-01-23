@@ -81,7 +81,7 @@ class Scrapy(object):
     
     def start(self):
         self.crawler.start()
-        log.start()
+        log.start(loglevel=self.settings.get('LOG_LEVEL', 'INFO'))
         reactor.run() # the script will block here until the spider_closed signal was sent @UndefinedVariable
         
     
@@ -183,7 +183,7 @@ USAGE
     except Exception as e:
         if DEBUG or TESTRUN:
             raise(e)
-        sys.stderr.write("%s: %s%s" % (sys.argv[0].split("/")[-1], str(e), os.linesep))
+        sys.stderr.write("{0}: {1}{2}".format(sys.argv[0].split("/")[-1], str(e), os.linesep))
         sys.stderr.write("\t for help use --help")
         return 2
 
