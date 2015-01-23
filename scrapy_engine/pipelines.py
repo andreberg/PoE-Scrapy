@@ -44,30 +44,41 @@ class DataTransform(object):
         return re.sub(rule['match'], 
                       rule['replace'], data, rule.get('options', 0))
         
-    def transform(self, data, catgeory):
+    def transform(self, data, category=None, step=None):
         match_rules = self.match_rules
         if not isinstance(match_rules, list):
             match_rules = [match_rules]
         for rule in match_rules:
+            rule_name = rule.get('name', "Unnamed")
             exclude = rule.get('exclude', None)
-            if exclude is not None:
-                if isinstance(exclude, list) and catgeory in exclude:
+            if category and exclude is not None:
+                if isinstance(exclude, list) and category in exclude:
                     log.msg("Excluding rule '%s' for category %s" %  
-                            (rule['name'], catgeory), log.DEBUG)
+                            (rule['name'], category), log.DEBUG)
                     continue
                 elif isinstance(exclude, str) and re.search(exclude, data):
                     log.msg("Excluding rule '%s' for data %s" %  
-                            (rule['name'], data), log.DEBUG)
+                            (rule_name, data), log.DEBUG)
                     continue
+            apply_at = rule.get("apply_at", None)
+            if step and apply_at is not None:
+                if step != apply_at:
+                    log.msg("Skipping '%s' for data %s: current step different from 'apply_at'" %  
+                            (rule_name, data), log.DEBUG)
+                    continue
+            elif step:
+                log.msg("Skipping '%s' for data %s: step given but 'apply_at' missing" %  
+                        (rule_name, data), log.DEBUG)
+                continue
             include = rule.get('include', None)
-            if include is not None:
-                if isinstance(include, list) and catgeory not in include:
+            if category and include is not None:
+                if isinstance(include, list) and category not in include:
                     log.msg("Skipping rule '%s': category %s not in 'include'" %  
-                            (rule['name'], catgeory), log.DEBUG)
+                            (rule_name, category), log.DEBUG)
                     continue
                 elif isinstance(include, str) and re.search(include, data) is None:
                     log.msg("Skipping rule '%s': data %s not matched by 'include'" %  
-                            (rule['name'], catgeory), log.DEBUG)
+                            (rule_name, category), log.DEBUG)
                     continue
             if rule.get('replace', None) is not None:
                 data = self.apply_match_rule(rule, data)
@@ -99,6 +110,12 @@ class TextTransform(DataTransform):
             'match': "To of",
             'replace': "Of",
             'options': re.IGNORECASE
+        },
+        { # Tabula Rasa
+            'name': 'Tabula Rasa > Tabula Rasa|Always has 6-Link but no stats',
+            'match': "Tabula Rasa(.*)",
+            'replace': r"Tabula Rasa|Always has 6-Link but no stats\1",
+            'apply_at': 'post_process'
         }]
     
     def __init__(self, processor):
@@ -368,7 +385,11 @@ last one in line.{1}\
                 else:
                     lines.append(line)
             self.text_store = os.linesep.join(lines)
-             
+            
+    def post_process_text_store(self):
+        for transform in self.transforms:
+            self.text_store = transform.transform(self.text_store, step="post_process")        
+        
     def process_all(self):
         for category in self.categories:
             unique_item_set = self._get_unique_item_set(category)
@@ -392,6 +413,7 @@ last one in line.{1}\
             self.text_store = text
             #self._write_category(category)
         self.process_special_items()
+        self.post_process_text_store()
         self._write_all()
 
 
@@ -479,6 +501,5 @@ class PoeScrapyPipeline(object):
         self._append_outline(item, filekey)
         if self.processor.is_special_item(item):
             self.processor.add_special_item(item)
-        #log.msg("self.processor = %s" % str(self.processor), log.INFO)
         self.processor.add_unique_item(item)
         return item
