@@ -95,8 +95,13 @@ class TextTransform(DataTransform):
             #'exclude': ['Maps']
         },
         { # em dash
-            'name': 'Em dash -> dash',
+            'name': 'Em dash -> minus',
             'match': u"\2013",
+            'replace': "-"
+        },
+        {
+            'name': 'Unicode minus -> minus',
+            'match': u"\u2212",
             'replace': "-"
         },
         { # To to
@@ -125,12 +130,17 @@ class TextTransform(DataTransform):
 
 class SanitizeTransform(DataTransform):
     
-    match_rules = [{ 
-        # em dash, e.g. '−'
-        'name': 'Em dash -> dash',
-        'match': u"\u2013",
-        'replace': "-"
-    }]
+    match_rules = [
+        { 
+            'name': 'Em dash -> minus',
+            'match': u"\u2013",
+            'replace': "-"
+        },
+        {
+            'name': 'Unicode minus -> minus',
+            'match': u"\u2212",
+            'replace': "-"
+        }]
     
     def __init__(self, processor):
         _match_rules = SanitizeTransform.match_rules
@@ -139,20 +149,31 @@ class SanitizeTransform(DataTransform):
 
 class ValueTransform(DataTransform):
     
+    # Please note: sequential order of match rules is important
     number_formats = [
-        { # range single, e.g. -(NN to NN)
+        { # negative range single, e.g. -(NN to NN)
+            'name': 'Prepend negative single-range value',
+            'match': ur"[\u2013\u2212-]\(([0-9\.]+)%? to ([0-9\.]+)%?\)%? ", 
+            'replace': r"-(\1-\2):"
+        }, 
+        { # range single, e.g. +(NN to NN)
             'name': 'Prepend single-range value',
             'match': r"\+?\(([0-9\.]+)%? to ([0-9\.]+)%?\)%? ", 
             'replace': r"\1-\2:"
         }, 
-        { # range double, e.g. +(NN to NN
+        { # negative range double, e.g. -(NN-NN to NN-NN)
+            'name': 'Prepend negative double-range value',
+            'match': ur"[\u2013\u2212-]\(([0-9\.]+)–([0-9\.]+)%? to ([0-9\.]+)–([0-9\.]+)%?\)%? ",
+            'replace': r"-(\1-\2),\3-\4:"
+        }, 
+        { # range double, e.g. +(NN-NN to NN-NN)
             'name': 'Prepend double-range value',
             'match': ur"\+?\(([0-9\.]+)–([0-9\.]+)%? to ([0-9\.]+)–([0-9\.]+)%?\)%? ",
             'replace': r"\1-\2,\3-\4:"
         }, 
         { # single_value, e.g. +N to ....
             'name': 'Prepend single value',
-            'match': r"\+?(\d+)%?\b", 
+            'match': ur"\+?([\u2013\u2212-]?\d+)%?\b", 
             'replace': r"\1:"
         }]
 
@@ -164,14 +185,29 @@ class ValueTransform(DataTransform):
     def apply_match_rule(self, rule, text):
         number_match = re.search(rule['match'], text)
         if number_match:
+            # XXX: this section is a bit of a hack: ideally we want the 'replace' spec 
+            # of the rule to cover the complete transform. However, in order to 
+            # forego dozens of regex variations for dealing with how the value is 
+            # embedded into the surrouding affix text, we simply take the match groups,
+            # matching the numeric values and alphanumeric text fragments covering the
+            # text portion of the affix line and string together the proper order that
+            # we need. I am not happy with this solution but for now it will have to do
+            # since I don't feel like writing a complete parser.
             if not self.is_transformed(text): # don't process already processed lines again
                 match_groups = number_match.groups()
                 value = "{0}".format(match_groups[0])
                 if len(match_groups) == 4:
-                    value = "{0}-{1},{2}-{3}".format(match_groups[0], match_groups[1], 
+                    if "negative" in rule['name']:
+                        value = "-({0}-{1},{2}-{3})".format(match_groups[0], match_groups[1], 
                                                  match_groups[2], match_groups[3])
+                    else:
+                        value = "{0}-{1},{2}-{3}".format(match_groups[0], match_groups[1], 
+                                                     match_groups[2], match_groups[3])
                 elif len(match_groups) == 2:
-                    value = "{0}-{1}".format(match_groups[0], match_groups[1])
+                    if "negative" in rule['name']:
+                        value = "-({0}-{1})".format(match_groups[0], match_groups[1])
+                    else:
+                        value = "{0}-{1}".format(match_groups[0], match_groups[1])
                 # remove matched value from text before we extract just the words
                 text = re.sub(rule['match'], "", text) 
                 words = _get_words(text)
@@ -290,7 +326,7 @@ class UniqueItemsProcessor(object):
         # Internal: RegExr x-forms:
         #  *\+?(-)?\((-?[0-9\.]+) to (-?[0-9\.]+)\)%? *([\w ]+) -> $1$2-$3:$4
         for transform in self.transforms:
-            data = transform.transform(data, category)
+            data = transform.transform(data.strip(), category)
         return data.strip()
     
     def _process_name(self, item):
