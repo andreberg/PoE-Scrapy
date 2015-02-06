@@ -42,7 +42,7 @@ class DataTransform(object):
     
     def apply_match_rule(self, rule, data):
         return re.sub(rule['match'], 
-                      rule['replace'], data, rule.get('options', 0))
+                      rule['replace'], data, rule.get('options', re.UNICODE))
         
     def transform(self, data, category=None, step=None):
         match_rules = self.match_rules
@@ -134,12 +134,14 @@ class SanitizeTransform(DataTransform):
         { 
             'name': 'Em dash -> minus',
             'match': u"\u2013",
-            'replace': "-"
+            'replace': "-",
+            'options': re.UNICODE
         },
         {
             'name': 'Unicode minus -> minus',
             'match': u"\u2212",
-            'replace': "-"
+            'replace': "-",
+            'options': re.UNICODE
         }]
     
     def __init__(self, processor):
@@ -151,31 +153,47 @@ class ValueTransform(DataTransform):
     
     # Please note: sequential order of match rules is important
     number_formats = [
+        { # Skill grants and gem supports
+            'name': 'Prepend skill grants and gem supports',
+            'match': r"([\w ]+?)level (\d+)([\w ]+)", 
+            'replace': r"\2:\1<lvl>\3"
+        }, 
+        { # embedded single range without parenthesis, e.g. TEXT N-NNN TEXT
+            'name': 'Prepend embedded single-range value',
+            'match': ur"([a-zA-Z ]+ )(\d+[\u2013\u2212-]\d+)([a-zA-Z ]+)", 
+            'replace': r"\2:\1\3"
+        }, 
         { # negative range single, e.g. -(NN to NN)
             'name': 'Prepend negative single-range value',
             'match': ur"[\u2013\u2212-]\(([0-9\.]+)%? to ([0-9\.]+)%?\)%? ", 
-            'replace': r"-(\1-\2):"
+            'replace': r"-(\1-\2):",
+            'type': ["range", "single", "negative"]
         }, 
         { # range single, e.g. +(NN to NN)
             'name': 'Prepend single-range value',
             'match': r"\+?\(([0-9\.]+)%? to ([0-9\.]+)%?\)%? ", 
-            'replace': r"\1-\2:"
+            'replace': r"\1-\2:",
+            'type': ["range", "single", "positive"]
         }, 
         { # negative range double, e.g. -(NN-NN to NN-NN)
             'name': 'Prepend negative double-range value',
             'match': ur"[\u2013\u2212-]\(([0-9\.]+)–([0-9\.]+)%? to ([0-9\.]+)–([0-9\.]+)%?\)%? ",
-            'replace': r"-(\1-\2),\3-\4:"
+            'replace': r"-(\1-\2),\3-\4:",
+            'type': ["range", "double", "negative"]
         }, 
         { # range double, e.g. +(NN-NN to NN-NN)
             'name': 'Prepend double-range value',
             'match': ur"\+?\(([0-9\.]+)–([0-9\.]+)%? to ([0-9\.]+)–([0-9\.]+)%?\)%? ",
-            'replace': r"\1-\2,\3-\4:"
+            'replace': r"\1-\2,\3-\4:",
+            'type': ["range", "double", "positive"]
         }, 
         { # single_value, e.g. +N to ....
             'name': 'Prepend single value',
             'match': ur"\+?([\u2013\u2212-]?\d+)%?\b", 
-            'replace': r"\1:"
-        }]
+            'replace': r"\1:",
+            'type': ["value", "single"]
+        }
+    ]
 
     def __init__(self, processor):
         _match_rules = ValueTransform.number_formats
@@ -194,24 +212,34 @@ class ValueTransform(DataTransform):
             # we need. I am not happy with this solution but for now it will have to do
             # since I don't feel like writing a complete parser.
             if not self.is_transformed(text): # don't process already processed lines again
-                match_groups = number_match.groups()
-                value = "{0}".format(match_groups[0])
-                if len(match_groups) == 4:
-                    if "negative" in rule['name']:
-                        value = "-({0}-{1},{2}-{3})".format(match_groups[0], match_groups[1], 
-                                                 match_groups[2], match_groups[3])
+                rule_type = rule.get("type", None)
+                if rule_type is None:
+                    text = re.sub(rule["match"], rule["replace"], text)
+                    text = re.sub(" {2,}", " ", text) # normalize 2 or more spaces into 1 space
+                else:
+                    rule_type = "-".join(rule_type)
+                    match_groups = number_match.groups()
+                    value = "{0}".format(match_groups[0])
+                    if len(match_groups) == 4:
+                        if rule_type == "range-double-negative": 
+                            value = "-({0}-{1},{2}-{3})".format(match_groups[0], match_groups[1], 
+                                                                match_groups[2], match_groups[3])
+                        else: # range-double-positive
+                            value = "{0}-{1},{2}-{3}".format(match_groups[0], match_groups[1], 
+                                                             match_groups[2], match_groups[3])
+                    elif len(match_groups) == 2:
+                        if rule_type == "range-single-negative":
+                            value = "-({0}-{1})".format(match_groups[0], 
+                                                        match_groups[1])
+                        else: # range-single-positive
+                            value = "{0}-{1}".format(match_groups[0], 
+                                                     match_groups[1])
                     else:
-                        value = "{0}-{1},{2}-{3}".format(match_groups[0], match_groups[1], 
-                                                     match_groups[2], match_groups[3])
-                elif len(match_groups) == 2:
-                    if "negative" in rule['name']:
-                        value = "-({0}-{1})".format(match_groups[0], match_groups[1])
-                    else:
-                        value = "{0}-{1}".format(match_groups[0], match_groups[1])
-                # remove matched value from text before we extract just the words
-                text = re.sub(rule['match'], "", text) 
-                words = _get_words(text)
-                text = "{0}:{1}".format(value, " ".join(words))
+                        log.msg("can't apply rule {0!r} - match groups missing".format(rule), log.DEBUG)
+                    # remove matched value from text before we extract just the words
+                    text = re.sub(rule['match'], "", text) 
+                    words = _get_words(text)
+                    text = "{0}:{1}".format(value, " ".join(words))
         return text
         
 
@@ -237,9 +265,11 @@ class UniqueItemsProcessor(object):
         self.unique_items = []
         self.special_items = []
         self.outdir = os.curdir
+        self.spider = None
         self.transforms = [
             ValueTransform(self), 
-            TextTransform(self)
+            TextTransform(self),
+            SanitizeTransform(self)
         ]
         self.append_item_url = False
     
@@ -319,6 +349,7 @@ class UniqueItemsProcessor(object):
             "affix_mods": affix_mods,
             "category": category
         })
+        unique_item_set = sorted(unique_item_set)
         log.msg("Category {} with {} items total"
                 .format(category, self._item_count(category)), log.DEBUG)
 
@@ -326,8 +357,9 @@ class UniqueItemsProcessor(object):
         # Internal: RegExr x-forms:
         #  *\+?(-)?\((-?[0-9\.]+) to (-?[0-9\.]+)\)%? *([\w ]+) -> $1$2-$3:$4
         for transform in self.transforms:
-            data = transform.transform(data.strip(), category)
-        return data.strip()
+            data = data.strip().decode(self.spider.get_site_encoding()) 
+            data = transform.transform(data, category)
+        return data
     
     def _process_name(self, item):
         return item["name"]
@@ -363,19 +395,21 @@ class UniqueItemsProcessor(object):
             processed_mods.append(self._apply_transform(mod, category))
         return sep + sep.join(processed_mods)
     
-    def _write_category(self, category):
+    def _write_category(self, category, encoding="utf-8-sig"):
         with open(os.path.join(self.outdir, category + ".txt"), 'w+b') as f:
-            f.write(self.text_store)
+            f.write(self.text_store.decode(self.spider.get_site_encoding())
+                    .encode(encoding))
 
-    def _write_all(self):
-        outfile = os.path.join(self.outdir, "Uniques.txt")
+    def _write_all(self, filename="Uniques.txt", encoding="utf-8-sig"):
+        outfile = os.path.join(self.outdir, filename)
         with open(outfile, 'w+b') as f:
             if self.text_store.strip() == self.file_header:
                 log.msg("Nothing to write. All URLs dropped by in/exclude patterns?")
             else:
                 log.msg("Writing data to {0}.".format(outfile), level=log.INFO)
                 timestamp = time.strftime("%Y-%m-%dT%H:%M:%S")
-            f.write("{}{}".format(UniqueItemsProcessor.file_header.format(timestamp, os.linesep), self.text_store))
+            f.write("{}{}".format(UniqueItemsProcessor.file_header.format(timestamp, os.linesep), self.text_store)
+                          .decode(self.spider.get_site_encoding()).encode(encoding))
     
     def process_special_items(self):
         log.msg("Parsing special items...", log.INFO)
@@ -424,7 +458,7 @@ class UniqueItemsProcessor(object):
             
     def post_process_text_store(self):
         for transform in self.transforms:
-            self.text_store = transform.transform(self.text_store, step="post_process")        
+            self.text_store = transform.transform(self.text_store, step="post_process")
         
     def process_all(self):
         for category in self.categories:
@@ -518,6 +552,7 @@ class PoeScrapyPipeline(object):
     def process_item(self, item, spider):
         outpath = self._get_outfile_path(spider)
         filekey = self._get_file_key(spider, outpath)
+        self.processor.spider = spider
         if filekey in self.files:
             outfile = self.files[filekey]
         else:

@@ -34,6 +34,7 @@ class GamepediaSpider(scrapy.Spider):
     
     name = 'gamepedia'
     allowed_domains = ['pathofexile.gamepedia.com']
+    encoding = "utf-8"
     start_urls = [
         'http://pathofexile.gamepedia.com/List_of_unique_amulets',
         'http://pathofexile.gamepedia.com/List_of_unique_belts',
@@ -66,6 +67,9 @@ class GamepediaSpider(scrapy.Spider):
             doc_path = doc_path[1:]
         self.path = doc_path
 
+    def get_site_encoding(self):
+        return self.encoding
+    
     def get_category(self):
         '''List_of_unique_boots -> Boots'''
         path = self.path
